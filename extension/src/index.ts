@@ -107,6 +107,9 @@ async function init() {
   filePathInput.addEventListener('input', () => validateFormState());
   saveButton.addEventListener('click', () => saveAndPushToGitHub());
   bannerClose.addEventListener('click', () => hideBanner());
+
+  // 5. Tell Azure DevOps we have finished loading to hide the spinner
+  SDK.notifyLoadSucceeded();
 }
 
 /**
@@ -178,21 +181,21 @@ async function loadWorkItemData() {
   try {
     const values = await formService.getFieldValues([
       'System.Title',
-      'Custom.BDDRepo',
-      'Custom.BDDBranch',
-      'Custom.BDDFilePath'
+      'Custom.Repository',
+      'Custom.FeatureBranch',
+      'Custom.FeatureFilePath'
     ]);
 
     activeWorkItemTitle = (values['System.Title'] as string) || '';
-    const storedRepo = (values['Custom.BDDRepo'] as string) || '';
-    const storedBranch = (values['Custom.BDDBranch'] as string) || '';
-    const storedFilePath = (values['Custom.BDDFilePath'] as string) || '';
+    const storedRepo = (values['Custom.Repository'] as string) || '';
+    const storedBranch = (values['Custom.FeatureBranch'] as string) || '';
+    const storedFilePath = (values['Custom.FeatureFilePath'] as string) || '';
 
     // Initialize list of Repositories from backend
     await fetchRepositories(storedRepo);
 
-    if (storedRepo) {
-      // Branch exists
+    if (storedRepo && storedBranch && storedFilePath) {
+      // Fully linked
       syncStatusBadge.textContent = 'Linked to GitHub';
       syncStatusBadge.className = 'badge badge-success';
 
@@ -203,7 +206,7 @@ async function loadWorkItemData() {
       // Fetch the file contents from GitHub
       await fetchFileContentFromGitHub(storedRepo, storedBranch, storedFilePath);
     } else {
-      // New Integration setup: pre-populate default branch & file names
+      // Not connected / partially configured
       syncStatusBadge.textContent = 'Not Connected';
       syncStatusBadge.className = 'badge badge-info';
 
@@ -215,6 +218,11 @@ async function loadWorkItemData() {
 
       targetBranchInput.value = `features/us-${activeWorkItemId}-${cleanTitle.substring(0, 30)}`;
       filePathInput.value = `tests/features/us-${activeWorkItemId}.feature`;
+
+      if (storedRepo) {
+        // If repo is selected but not yet fully synced, fetch its branches to populate the base branch selector
+        await fetchBranchesForRepo(storedRepo);
+      }
     }
 
     validateFormState();
@@ -250,12 +258,17 @@ async function fetchRepositories(selectValue?: string) {
 
     const data = await response.json() as { repos: string[] };
 
+    let normalizedSelect = selectValue || '';
+    if (normalizedSelect.includes('github.com/')) {
+      normalizedSelect = normalizedSelect.split('github.com/')[1].replace(/\.git$/, '');
+    }
+
     repoSelect.innerHTML = '<option value="" disabled>Choose a repository</option>';
     data.repos.forEach(repo => {
       const option = document.createElement('option');
       option.value = repo;
       option.textContent = repo;
-      if (repo === selectValue) option.selected = true;
+      if (repo === normalizedSelect) option.selected = true;
       repoSelect.appendChild(option);
     });
 
@@ -425,9 +438,9 @@ async function saveAndPushToGitHub() {
     const data = await response.json() as { commitSha: string; createdNewBranch: boolean };
 
     // Update ADO custom fields to link the files permanently
-    await formService.setFieldValue('Custom.BDDRepo', repo);
-    await formService.setFieldValue('Custom.BDDBranch', targetBranch);
-    await formService.setFieldValue('Custom.BDDFilePath', filePath);
+    await formService.setFieldValue('Custom.Repository', repo);
+    await formService.setFieldValue('Custom.FeatureBranch', targetBranch);
+    await formService.setFieldValue('Custom.FeatureFilePath', filePath);
 
     // Prompt user to save the work item changes to save the updated BDD metadata fields
     showBanner(`Successfully synced BDD file to GitHub (Commit: ${data.commitSha.substring(0, 7)}). Please save this User Story to persist links!`, 'success');
@@ -467,4 +480,6 @@ function hideBanner() {
 // Start application
 init().catch(err => {
   console.error("Extension initialization failed", err);
+  // Dismiss spinner even if init fails so user can see the error in the UI
+  try { SDK.notifyLoadSucceeded(); } catch (e) {}
 });

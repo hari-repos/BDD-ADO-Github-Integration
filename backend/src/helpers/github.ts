@@ -5,6 +5,70 @@ let cachedToken: string | null = null;
 let tokenExpiry: number = 0;
 
 /**
+ * Helper to ensure a private key is properly formatted as a multi-line PEM key.
+ * Azure Portal often strips newlines or flattens keys, which causes RS256 signature failures.
+ */
+function formatPrivateKey(key: string): string {
+  if (!key) return '';
+  let cleanKey = key.trim().replace(/^["']|["']$/g, '');
+  cleanKey = cleanKey.replace(/\\n/g, '\n');
+  if (cleanKey.includes('\n')) {
+    return cleanKey;
+  }
+  const rsaHeader = '-----BEGIN RSA PRIVATE KEY-----';
+  const rsaFooter = '-----END RSA PRIVATE KEY-----';
+  const pkcs8Header = '-----BEGIN PRIVATE KEY-----';
+  const pkcs8Footer = '-----END PRIVATE KEY-----';
+  let header = pkcs8Header;
+  let footer = pkcs8Footer;
+  let rawBody = cleanKey;
+  if (cleanKey.includes(rsaHeader)) {
+    header = rsaHeader;
+    footer = rsaFooter;
+    rawBody = cleanKey.replace(rsaHeader, '').replace(rsaFooter, '').trim();
+  } else if (cleanKey.includes(pkcs8Header)) {
+    header = pkcs8Header;
+    footer = pkcs8Footer;
+    rawBody = cleanKey.replace(pkcs8Header, '').replace(pkcs8Footer, '').trim();
+  }
+  rawBody = rawBody.replace(/\s+/g, '');
+  const chunks: string[] = [];
+  for (let i = 0; i < rawBody.length; i += 64) {
+    chunks.push(rawBody.substring(i, i + 64));
+  }
+  return `${header}\n${chunks.join('\n')}\n${footer}`;
+}
+
+/**
+ * Parses the repository name and handles full github URLs, git SSH formats, etc.
+ * Extracts and returns `{ owner, repo }`.
+ */
+function parseRepoFullName(repoName: string): { owner: string; repo: string } {
+  let cleanName = repoName.trim();
+  
+  if (cleanName.startsWith('http://') || cleanName.startsWith('https://')) {
+    try {
+      const url = new URL(cleanName);
+      cleanName = url.pathname;
+    } catch {}
+  } else if (cleanName.includes('git@github.com:')) {
+    cleanName = cleanName.split('git@github.com:')[1];
+  }
+  
+  cleanName = cleanName.replace(/^\/|\/$/g, '').replace(/\.git$/, '');
+  
+  const parts = cleanName.split('/');
+  if (parts.length < 2) {
+    throw new Error(`Invalid repository name format: '${repoName}'. Expected 'owner/repo' or a GitHub URL.`);
+  }
+  
+  const repo = parts[parts.length - 1];
+  const owner = parts[parts.length - 2];
+  
+  return { owner, repo };
+}
+
+/**
  * Generates an installation access token for the GitHub App.
  * Caches the token until it expires to optimize performance.
  */
@@ -17,8 +81,7 @@ async function getInstallationAccessToken(): Promise<string> {
     throw new Error('GitHub App configuration (GITHUB_APP_ID, GITHUB_PRIVATE_KEY, GITHUB_APP_INSTALLATION_ID) is incomplete.');
   }
 
-  // Handle literal "\n" in environment variables
-  privateKey = privateKey.replace(/\\n/g, '\n');
+  privateKey = formatPrivateKey(privateKey);
 
   const now = Math.floor(Date.now() / 1000);
   
@@ -92,7 +155,7 @@ export async function getFileContent(
   filePath: string
 ): Promise<string | null> {
   const octokit = await getGitHubClient();
-  const [owner, repo] = repoFullName.split('/');
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   try {
     const response = await octokit.repos.getContent({
@@ -126,7 +189,7 @@ export async function createBranch(
   newBranch: string
 ): Promise<boolean> {
   const octokit = await getGitHubClient();
-  const [owner, repo] = repoFullName.split('/');
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   // 1. Verify if branch already exists
   try {
@@ -172,7 +235,7 @@ export async function commitFile(
   commitMessage: string
 ): Promise<string> {
   const octokit = await getGitHubClient();
-  const [owner, repo] = repoFullName.split('/');
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   // 1. Check if file already exists to get its SHA (required for updates)
   let existingSha: string | undefined;
@@ -212,7 +275,7 @@ export async function commitFile(
  */
 export async function listBranches(repoFullName: string): Promise<string[]> {
   const octokit = await getGitHubClient();
-  const [owner, repo] = repoFullName.split('/');
+  const { owner, repo } = parseRepoFullName(repoFullName);
 
   const branches = await octokit.repos.listBranches({
     owner,

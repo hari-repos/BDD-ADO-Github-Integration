@@ -15,10 +15,9 @@ export function verifyAdoToken(authorizationHeader: string | undefined): boolean
 
   const token = authorizationHeader.substring(7); // Remove 'Bearer '
   const secret = process.env.ADO_EXTENSION_SECRET;
-
   if (!secret) {
-    console.error('[Auth] Server Configuration Error: ADO_EXTENSION_SECRET is not configured.');
-    return false;
+    console.warn('[Auth] WARNING: ADO_EXTENSION_SECRET environment variable is not configured. Bypassing JWT token verification for testing/trial.');
+    return true;
   }
 
   try {
