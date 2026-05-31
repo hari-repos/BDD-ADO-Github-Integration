@@ -1,0 +1,55 @@
+{
+  "manifestVersion": 1,
+  "id": "bdd-canvas-for-boards-dev",
+  "publisher": "HaritharanPrabalanathan",
+  "version": "1.0.2",
+  "name": "BDD Canvas for Boards (DEV)",
+  "description": "Local debugging version of BDD Canvas for Boards.",
+  "public": false,
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "baseUri": "https://localhost:5173",
+  "icons": {
+    "default": "images/logo.png"
+  },
+  "categories": [
+    "Azure Boards"
+  ],
+  "content": {
+    "details": {
+      "path": "README.md"
+    }
+  },
+  "scopes": [
+    "vso.work",
+    "vso.work_write",
+    "vso.profile"
+  ],
+  "contributions": [
+    {
+      "id": "bdd-gherkin-tab-dev",
+      "type": "ms.vss-work-web.work-item-form-page",
+      "targets": [
+        "ms.vss-work-web.work-item-form"
+      ],
+      "properties": {
+        "name": "BDD Canvas (DEV)",
+        "uri": "index.html",
+        "icon": "images/tab-icon.png"
+      }
+    }
+  ],
+  "files": [
+    {
+      "path": "images",
+      "addressable": true
+    },
+    {
+      "path": "README.md",
+      "addressable": false
+    }
+  ]
+}
