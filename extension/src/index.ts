@@ -1,6 +1,7 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import type { IWorkItemFormService } from 'azure-devops-extension-api/WorkItemTracking';
 import type { IExtensionDataService, IExtensionDataManager } from 'azure-devops-extension-api/Common';
+import { githubDirectFetch, getRepoFullName } from './github';
 
 // We will dynamically import monaco so that if it throws a SecurityError at import time (due to sandboxed iframe),
 // we can catch it!
@@ -221,7 +222,7 @@ async function populateBaseBranchDropdown() {
   
   try {
     const repo = getRepoFullName(githubRepo);
-    const branchesData = await githubDirectFetch(`/repos/${repo}/branches`, 'GET');
+    const branchesData = await githubDirectFetch(`/repos/${repo}/branches`, 'GET', githubPAT);
     
     baseBranchInput.innerHTML = '';
     
@@ -379,47 +380,7 @@ function validateFormState() {
   saveButton.disabled = !(githubRepo && githubPAT && isTargetBranchFilled && isFilePathFilled && isGherkinValid);
 }
 
-/**
- * Performs a direct fetch to the GitHub API, bypassing Azure DevOps proxy.
- */
-async function githubDirectFetch(path: string, method: string = 'GET', body?: any) {
-  const url = `https://api.github.com${path.startsWith('/') ? path : '/' + path}`;
-  const response = await fetch(url, {
-    method: method,
-    headers: {
-      'Authorization': `Bearer ${githubPAT}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json'
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
 
-  if (!response.ok) {
-    let errorMsg = response.statusText;
-    try {
-      const errorJson = await response.json();
-      errorMsg = errorJson.message || errorMsg;
-    } catch (e) {}
-    throw new Error(`GitHub API Error: ${response.status} ${errorMsg}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Normalizes a GitHub repository string (which might be a full URL) into an 'owner/repo' format.
- */
-function getRepoFullName(repoStr: string): string {
-  try {
-    if (repoStr.startsWith('http')) {
-      const url = new URL(repoStr);
-      return url.pathname.replace(/^\/|\.git$/g, '');
-    }
-  } catch (e) {
-    // ignore
-  }
-  return repoStr.replace(/^\/|\.git$/g, '');
-}
 
 /**
  * Fetches existing feature file contents from GitHub via Proxy and puts them into the Monaco Editor.
@@ -427,7 +388,7 @@ function getRepoFullName(repoStr: string): string {
 async function fetchFileContentFromGitHub(repo: string, branch: string, filePath: string) {
   try {
     const fullRepo = getRepoFullName(repo);
-    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${branch}`, 'GET');
+    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${branch}`, 'GET', githubPAT);
 
     if (data && data.content) {
       const content = atob(data.content);
@@ -451,7 +412,7 @@ async function handleDeletedOrMergedBranch(repo: string, filePath: string) {
   try {
     const baseBranch = baseBranchInput.value || githubBaseBranch || 'main';
     const fullRepo = getRepoFullName(repo);
-    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${baseBranch}`, 'GET');
+    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${baseBranch}`, 'GET', githubPAT);
 
     if (data && data.content) {
       const content = atob(data.content);
@@ -485,7 +446,7 @@ async function saveAndPushToGitHub() {
     // 1. Get base branch SHA
     let baseSha: string | undefined;
     try {
-      const baseBranchData = await githubDirectFetch(`/repos/${repo}/git/refs/heads/${baseBranch}`, 'GET');
+      const baseBranchData = await githubDirectFetch(`/repos/${repo}/git/refs/heads/${baseBranch}`, 'GET', githubPAT);
       baseSha = baseBranchData?.object?.sha;
     } catch (e: any) {
       throw new Error(`Failed to access base branch '${baseBranch}'. Please verify that the branch exists, your Personal Access Token has 'repo' scope, and the repository URL is correct. (Inner Error: ${e.message})`);
@@ -500,6 +461,7 @@ async function saveAndPushToGitHub() {
       await githubDirectFetch(
         `/repos/${repo}/git/refs`, 
         'POST', 
+        githubPAT,
         { ref: `refs/heads/${targetBranch}`, sha: baseSha }
       );
     } catch (e: any) {
@@ -511,7 +473,7 @@ async function saveAndPushToGitHub() {
     // 3. Check if file exists to get its SHA (required for updating)
     let existingSha: string | undefined = undefined;
     try {
-      const fileData = await githubDirectFetch(`/repos/${repo}/contents/${filePath}?ref=${targetBranch}`, 'GET');
+      const fileData = await githubDirectFetch(`/repos/${repo}/contents/${filePath}?ref=${targetBranch}`, 'GET', githubPAT);
       existingSha = fileData?.sha;
     } catch (e: any) {
       if (!e.message.includes('404') && !e.message.includes('Not Found')) {
@@ -526,6 +488,7 @@ async function saveAndPushToGitHub() {
       const response = await githubDirectFetch(
         `/repos/${repo}/contents/${filePath}`, 
         'PUT', 
+        githubPAT,
         {
           message: commitMsg,
           content: base64Content,
