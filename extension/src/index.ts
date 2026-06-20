@@ -1,18 +1,22 @@
 import * as SDK from 'azure-devops-extension-sdk';
 import type { IWorkItemFormService } from 'azure-devops-extension-api/WorkItemTracking';
-import * as monaco from 'monaco-editor';
+import type { IExtensionDataService, IExtensionDataManager } from 'azure-devops-extension-api/Common';
+import { githubDirectFetch, getRepoFullName } from './github';
 
-// Configure the Azure Function endpoint here
-const SYNC_SERVICE_BASE_URL = 'https://bdd-canvas-sync-function-fjc0hdcxdxdahwcr.eastasia-01.azurewebsites.net/api/syncbdd';
+// We will dynamically import monaco so that if it throws a SecurityError at import time (due to sandboxed iframe),
+// we can catch it!
+// import * as monaco from 'monaco-editor';
 
-let editor: monaco.editor.IStandaloneCodeEditor;
-let activeWorkItemId: number;
+let monaco: any;
+let editor: any;
+let activeWorkItemId: number | undefined;
 let activeWorkItemTitle: string;
 let formService: IWorkItemFormService;
+let dataManager: IExtensionDataManager;
 
 // DOM Elements
-const repoSelect = document.getElementById('repo-select') as HTMLSelectElement;
-const baseBranchSelect = document.getElementById('base-branch-select') as HTMLSelectElement;
+const repoInput = document.getElementById('repo-input') as HTMLInputElement;
+const baseBranchInput = document.getElementById('base-branch-input') as HTMLSelectElement;
 const targetBranchInput = document.getElementById('target-branch-input') as HTMLInputElement;
 const filePathInput = document.getElementById('file-path-input') as HTMLInputElement;
 const saveButton = document.getElementById('save-button') as HTMLButtonElement;
@@ -27,11 +31,16 @@ const syncStatusBadge = document.getElementById('sync-status-badge') as HTMLSpan
 const linterWarning = document.getElementById('linter-warning') as HTMLDivElement;
 const linterWarningMessage = document.getElementById('linter-warning-message') as HTMLSpanElement;
 
+// Project Config
+let githubPAT = '';
+let githubRepo = '';
+let githubBaseBranch = '';
+let adoUserName = '';
+let adoUserEmail = '';
+
 // Disable Monaco workers entirely to comply with Azure DevOps iframe CSP.
-// Monaco runs in single-threaded mode which is perfectly fine for Gherkin editing.
 (window as any).MonacoEnvironment = {
   getWorker: function () {
-    // Return a no-op worker-like object — avoids eval() and blob URL CSP violations.
     return new Worker(
       URL.createObjectURL(new Blob([''], { type: 'application/javascript' }))
     );
@@ -42,33 +51,81 @@ const linterWarningMessage = document.getElementById('linter-warning-message') a
  * Initializes the SDK and configures the editor UI.
  */
 async function init() {
-  // IMPORTANT: SDK.register() MUST be called before SDK.ready().
-  // The ADO host waits for the contribution to be registered before
-  // it considers the extension fully loaded. Calling ready() first
-  // causes a timeout and triggers the "failed to load" error.
+  const isLocal = window === window.parent;
+
+  if (isLocal) {
+    monaco = await import('monaco-editor');
+    
+    adoUserName = "Local Dev";
+    githubRepo = "hari/local-repo";
+    githubBaseBranch = "main";
+    githubPAT = "mock-pat";
+    activeWorkItemId = 123;
+    activeWorkItemTitle = "Mock User Story";
+    
+    repoInput.value = githubRepo;
+    baseBranchInput.value = githubBaseBranch;
+    targetBranchInput.value = "feature/123-mock-story";
+    filePathInput.value = "tests/features/pbi-123.feature";
+
+    editor = monaco.editor.create(document.getElementById('editor-container')!, {
+      value: [
+        '# Enter your BDD scenarios here...',
+        'Feature: Mock Feature',
+        '',
+        '  Scenario: Mock Scenario',
+        '    Given local dev is working',
+        '    Then it should render the UI'
+      ].join('\n'),
+      language: 'gherkin',
+      theme: 'vs-dark',
+      automaticLayout: true,
+      minimap: { enabled: false },
+      fontSize: 13,
+      fontFamily: "'JetBrains Mono', monospace",
+      lineHeight: 20
+    });
+
+    editor.onDidChangeModelContent(() => {
+      validateGherkinSyntax();
+    });
+
+    saveButton.addEventListener('click', () => {
+      showBanner("Local mock save triggered", "success");
+    });
+    bannerClose.addEventListener('click', () => hideBanner());
+
+    syncStatusBadge.textContent = 'Local Dev Mode';
+    syncStatusBadge.className = 'badge badge-success';
+    validateFormState();
+    return;
+  }
+
+  // 1. Initialize SDK without auto-notifying
   await SDK.init({ loaded: false });
 
-  // Register the work item event handlers BEFORE signalling ready.
+  // 2. Register the contribution object IMMEDIATELY
   const workItemEvents = {
-    onFieldChanged: async () => {
-      await loadWorkItemData();
-    },
-    onLoaded: async () => {
-      await loadWorkItemData();
-    },
-    onRefreshed: async () => {
-      await loadWorkItemData();
-    },
-    onSaved: async () => {
-      await loadWorkItemData();
-    }
+    onFieldChanged: async () => await loadWorkItemData(),
+    onLoaded: async () => await loadWorkItemData(),
+    onRefreshed: async () => await loadWorkItemData(),
+    onSaved: async () => await loadWorkItemData()
   };
   SDK.register(SDK.getContributionId(), workItemEvents);
 
-  // Now signal to ADO that the extension is loaded and ready.
+  // 3. Notify ADO we are loaded IMMEDIATELY, before any heavy async work or API calls
+  // This prevents timeouts and race conditions.
+  SDK.notifyLoadSucceeded();
+
+  // Dynamically load Monaco so we can catch sandbox security errors
+  monaco = await import('monaco-editor');
+
   await SDK.ready();
 
-  // 1. Initialize Monaco Editor (after SDK is ready)
+  const user = SDK.getUser();
+  adoUserName = user.displayName;
+  adoUserEmail = user.name; // In ADO SDK, name usually contains the email/UPN.
+
   editor = monaco.editor.create(document.getElementById('editor-container')!, {
     value: [
       '# Enter your BDD scenarios here...',
@@ -88,32 +145,119 @@ async function init() {
     lineHeight: 20
   });
 
-  // Attach linting listener
   editor.onDidChangeModelContent(() => {
     validateGherkinSyntax();
   });
 
-  // 2. Fetch Azure DevOps Work Item Form Service
   formService = await SDK.getService<IWorkItemFormService>("ms.vss-work-web.work-item-form");
-  activeWorkItemId = await formService.getId();
 
-  // 3. Load initial configuration and fetch repos
-  await loadWorkItemData();
-
-  // 4. Attach event listeners
-  repoSelect.addEventListener('change', () => onRepoChanged());
-  baseBranchSelect.addEventListener('change', () => validateFormState());
-  targetBranchInput.addEventListener('input', () => validateFormState());
-  filePathInput.addEventListener('input', () => validateFormState());
   saveButton.addEventListener('click', () => saveAndPushToGitHub());
   bannerClose.addEventListener('click', () => hideBanner());
 
-  // 5. Tell Azure DevOps we have finished loading to hide the spinner
-  SDK.notifyLoadSucceeded();
+  try {
+    activeWorkItemId = await formService.getId();
+  } catch (e) {
+    activeWorkItemId = 0;
+  }
+  
+  try {
+    const dataService = await SDK.getService<IExtensionDataService>("ms.vss-features.extension-data-service");
+    const extensionContext = SDK.getExtensionContext();
+    const accessToken = await SDK.getAccessToken();
+    dataManager = await dataService.getExtensionDataManager(extensionContext.id, accessToken);
+    
+    await loadProjectConfig();
+    await loadWorkItemData();
+  } catch (err: any) {
+    console.error("Error loading extension data:", err);
+    showBanner(`Error loading settings: ${err.message}`, 'error');
+  }
 }
 
 /**
- * Validates Gherkin syntax on the client-side to ensure the scenario is well-formed.
+ * Loads Project-Level Configuration instead of User-level.
+ */
+async function loadProjectConfig() {
+  try {
+    // Shared settings configured by Project Admin
+    const savedRepo = await dataManager.getValue<string>('githubRepo', { scopeType: 'Default' });
+    const savedBaseBranch = await dataManager.getValue<string>('githubBaseBranch', { scopeType: 'Default' });
+    const savedPat = await dataManager.getValue<string>('githubPAT', { scopeType: 'Default' });
+
+    if (savedRepo) githubRepo = savedRepo;
+    if (savedBaseBranch) githubBaseBranch = savedBaseBranch;
+    if (savedPat) githubPAT = savedPat;
+
+    repoInput.value = githubRepo || 'Not Configured';
+    
+    if (githubRepo && githubPAT) {
+      await populateBaseBranchDropdown();
+    } else {
+      baseBranchInput.innerHTML = `<option disabled selected>Not Configured</option>`;
+    }
+
+    if (!githubRepo || !githubPAT) {
+      showBanner('GitHub integration is not configured. Please visit the BDD Settings in Project Settings to configure it.', 'error');
+      const overlay = document.getElementById('missing-config-overlay');
+      if (overlay) overlay.classList.remove('hidden');
+      
+      syncStatusBadge.textContent = "Missing Configuration";
+      syncStatusBadge.className = "badge badge-warning";
+      
+      if (editor) {
+        editor.updateOptions({ readOnly: true });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load Project config", err);
+  }
+}
+
+/**
+ * Fetches available branches from GitHub and populates the dropdown.
+ */
+async function populateBaseBranchDropdown() {
+  const loader = document.getElementById('baseBranchLoader') as HTMLSpanElement;
+  if (loader) loader.style.display = 'inline-block';
+  
+  try {
+    const repo = getRepoFullName(githubRepo);
+    const branchesData = await githubDirectFetch(`/repos/${repo}/branches`, 'GET', githubPAT);
+    
+    baseBranchInput.innerHTML = '';
+    
+    if (Array.isArray(branchesData)) {
+      let foundConfigured = false;
+      branchesData.forEach((b: any) => {
+        const option = document.createElement('option');
+        option.value = b.name;
+        option.textContent = b.name;
+        if (b.name === githubBaseBranch) {
+          option.selected = true;
+          foundConfigured = true;
+        }
+        baseBranchInput.appendChild(option);
+      });
+      
+      if (!foundConfigured && branchesData.length > 0) {
+        baseBranchInput.value = branchesData[0].name;
+      } else if (branchesData.length === 0) {
+        baseBranchInput.innerHTML = `<option disabled selected>No branches found</option>`;
+      }
+    } else {
+      baseBranchInput.innerHTML = `<option disabled selected>Error loading branches</option>`;
+      console.error('Failed to parse branches:', branchesData);
+    }
+  } catch (err: any) {
+    console.error("Failed to fetch branches", err);
+    baseBranchInput.innerHTML = `<option value="${githubBaseBranch || 'main'}">${githubBaseBranch || 'main'} (Offline)</option>`;
+  } finally {
+    if (loader) loader.style.display = 'none';
+  }
+}
+
+/**
+ * Validates Gherkin syntax on the client-side.
  */
 function validateGherkinSyntax(): boolean {
   const content = editor.getValue().trim();
@@ -175,54 +319,48 @@ function hideLinterWarning() {
 }
 
 /**
- * Loads the current Work Item fields and triggers repository fetching.
+ * Loads the current Work Item fields.
  */
 async function loadWorkItemData() {
   try {
+    if (!formService) {
+      formService = await SDK.getService<IWorkItemFormService>("ms.vss-work-web.work-item-form");
+    }
+
     const values = await formService.getFieldValues([
       'System.Title',
-      'Custom.Repository',
       'Custom.FeatureBranch',
       'Custom.FeatureFilePath'
     ]);
 
     activeWorkItemTitle = (values['System.Title'] as string) || '';
-    const storedRepo = (values['Custom.Repository'] as string) || '';
     const storedBranch = (values['Custom.FeatureBranch'] as string) || '';
     const storedFilePath = (values['Custom.FeatureFilePath'] as string) || '';
 
-    // Initialize list of Repositories from backend
-    await fetchRepositories(storedRepo);
+    if (!githubRepo || !githubPAT) return;
 
-    if (storedRepo && storedBranch && storedFilePath) {
-      // Fully linked
+    if (storedBranch && storedFilePath) {
       syncStatusBadge.textContent = 'Linked to GitHub';
       syncStatusBadge.className = 'badge badge-success';
 
-      await fetchBranchesForRepo(storedRepo, storedBranch);
       targetBranchInput.value = storedBranch;
       filePathInput.value = storedFilePath;
 
-      // Fetch the file contents from GitHub
-      await fetchFileContentFromGitHub(storedRepo, storedBranch, storedFilePath);
+      await fetchFileContentFromGitHub(githubRepo, storedBranch, storedFilePath);
     } else {
-      // Not connected / partially configured
       syncStatusBadge.textContent = 'Not Connected';
       syncStatusBadge.className = 'badge badge-info';
 
+      // Auto-generate strict branch name: feature/<id>-<title-lowercase>
       const cleanTitle = activeWorkItemTitle
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '-')
         .replace(/-+/g, '-')
         .replace(/^-|-$/g, '');
 
-      targetBranchInput.value = `features/us-${activeWorkItemId}-${cleanTitle.substring(0, 30)}`;
-      filePathInput.value = `tests/features/us-${activeWorkItemId}.feature`;
-
-      if (storedRepo) {
-        // If repo is selected but not yet fully synced, fetch its branches to populate the base branch selector
-        await fetchBranchesForRepo(storedRepo);
-      }
+      const generatedBranchName = `feature/${activeWorkItemId}-${cleanTitle.substring(0, 40)}`;
+      targetBranchInput.value = generatedBranchName;
+      filePathInput.value = `tests/features/pbi-${activeWorkItemId}.feature`;
     }
 
     validateFormState();
@@ -235,128 +373,35 @@ async function loadWorkItemData() {
  * Validates whether the form is filled out correctly to toggle the save button state.
  */
 function validateFormState() {
-  const isRepoSelected = repoSelect.value !== "";
-  const isBaseBranchSelected = baseBranchSelect.value !== "";
   const isTargetBranchFilled = targetBranchInput.value.trim() !== "";
   const isFilePathFilled = filePathInput.value.trim() !== "";
   const isGherkinValid = validateGherkinSyntax();
 
-  saveButton.disabled = !(isRepoSelected && isBaseBranchSelected && isTargetBranchFilled && isFilePathFilled && isGherkinValid);
+  saveButton.disabled = !(githubRepo && githubPAT && isTargetBranchFilled && isFilePathFilled && isGherkinValid);
 }
 
-/**
- * Fetches available repositories via our secure backend.
- */
-async function fetchRepositories(selectValue?: string) {
-  try {
-    const token = await SDK.getAppToken();
-    const response = await fetch(`${SYNC_SERVICE_BASE_URL}?action=repos`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
 
-    if (!response.ok) throw new Error(await response.text());
-
-    const data = await response.json() as { repos: string[] };
-
-    let normalizedSelect = selectValue || '';
-    if (normalizedSelect.includes('github.com/')) {
-      normalizedSelect = normalizedSelect.split('github.com/')[1].replace(/\.git$/, '');
-    }
-
-    repoSelect.innerHTML = '<option value="" disabled>Choose a repository</option>';
-    data.repos.forEach(repo => {
-      const option = document.createElement('option');
-      option.value = repo;
-      option.textContent = repo;
-      if (repo === normalizedSelect) option.selected = true;
-      repoSelect.appendChild(option);
-    });
-
-    repoSelect.disabled = false;
-  } catch (error: any) {
-    showBanner(`Failed to load GitHub repositories: ${error.message}`, 'error');
-  }
-}
 
 /**
- * Handles repository selection changes by loading the repo's branches.
- */
-async function onRepoChanged() {
-  const repo = repoSelect.value;
-  baseBranchSelect.disabled = true;
-  baseBranchSelect.innerHTML = '<option value="" disabled selected>Loading branches...</option>';
-  validateFormState();
-
-  await fetchBranchesForRepo(repo);
-}
-
-/**
- * Fetches branches for a repository and populates the base branch selector.
- */
-async function fetchBranchesForRepo(repoName: string, selectValue?: string) {
-  try {
-    const token = await SDK.getAppToken();
-    const response = await fetch(`${SYNC_SERVICE_BASE_URL}?action=branches&repo=${encodeURIComponent(repoName)}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-
-    if (!response.ok) throw new Error(await response.text());
-
-    const data = await response.json() as { branches: string[] };
-
-    baseBranchSelect.innerHTML = '<option value="" disabled selected>Select base branch</option>';
-
-    // Choose common defaults for base branch if not configured
-    let defaultBase = selectValue || '';
-    if (!defaultBase) {
-      if (data.branches.includes('main')) defaultBase = 'main';
-      else if (data.branches.includes('master')) defaultBase = 'master';
-      else if (data.branches.includes('develop')) defaultBase = 'develop';
-    }
-
-    data.branches.forEach(branch => {
-      const option = document.createElement('option');
-      option.value = branch;
-      option.textContent = branch;
-      if (branch === defaultBase) option.selected = true;
-      baseBranchSelect.appendChild(option);
-    });
-
-    baseBranchSelect.disabled = false;
-    targetBranchInput.disabled = false;
-    filePathInput.disabled = false;
-    validateFormState();
-  } catch (error: any) {
-    showBanner(`Failed to load branches for ${repoName}: ${error.message}`, 'error');
-  }
-}
-
-/**
- * Fetches existing feature file contents from GitHub and puts them into the Monaco Editor.
+ * Fetches existing feature file contents from GitHub via Proxy and puts them into the Monaco Editor.
  */
 async function fetchFileContentFromGitHub(repo: string, branch: string, filePath: string) {
   try {
-    const token = await SDK.getAppToken();
-    const url = `${SYNC_SERVICE_BASE_URL}?action=file&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(branch)}&filePath=${encodeURIComponent(filePath)}`;
+    const fullRepo = getRepoFullName(repo);
+    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${branch}`, 'GET', githubPAT);
 
-    const response = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-
-    if (!response.ok) throw new Error(await response.text());
-
-    const data = await response.json() as { content: string | null };
-
-    if (data.content !== null) {
-      editor.setValue(data.content);
+    if (data && data.content) {
+      const content = atob(data.content);
+      editor.setValue(content);
       syncStatusBadge.textContent = 'Synced with Git Branch';
       syncStatusBadge.className = 'badge badge-success';
-    } else {
-      // File not found on branch, check if branch was deleted after merge
-      await handleDeletedOrMergedBranch(repo, filePath);
     }
   } catch (error: any) {
-    showBanner(`Failed to fetch feature file content from GitHub: ${error.message}`, 'error');
+    if (error.message.includes('404') || error.message.includes('Not Found')) {
+      await handleDeletedOrMergedBranch(repo, filePath);
+    } else {
+      showBanner(`Failed to fetch file content: ${error.message}`, 'error');
+    }
   }
 }
 
@@ -365,85 +410,119 @@ async function fetchFileContentFromGitHub(repo: string, branch: string, filePath
  */
 async function handleDeletedOrMergedBranch(repo: string, filePath: string) {
   try {
-    const token = await SDK.getAppToken();
-    const baseBranch = baseBranchSelect.value || 'main';
-    const url = `${SYNC_SERVICE_BASE_URL}?action=file&repo=${encodeURIComponent(repo)}&branch=${encodeURIComponent(baseBranch)}&filePath=${encodeURIComponent(filePath)}`;
+    const baseBranch = baseBranchInput.value || githubBaseBranch || 'main';
+    const fullRepo = getRepoFullName(repo);
+    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${baseBranch}`, 'GET', githubPAT);
 
-    const response = await fetch(url, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-
-    if (response.ok) {
-      const data = await response.json() as { content: string | null };
-      if (data.content) {
-        editor.setValue(data.content);
-        syncStatusBadge.textContent = 'Merged (Read-only)';
-        syncStatusBadge.className = 'badge badge-warning';
-        showBanner(`Branch has been deleted. Loaded scenario from merged base branch '${baseBranch}'.`, 'success');
-      } else {
-        syncStatusBadge.textContent = 'Not Synced';
-        syncStatusBadge.className = 'badge badge-info';
-      }
+    if (data && data.content) {
+      const content = atob(data.content);
+      editor.setValue(content);
+      syncStatusBadge.textContent = 'Merged (Read-only)';
+      syncStatusBadge.className = 'badge badge-warning';
+      showBanner(`Branch has been deleted. Loaded scenario from merged base branch '${baseBranch}'.`, 'success');
     }
   } catch (err) {
-    console.error("Failed base branch merge fallback check", err);
+    syncStatusBadge.textContent = 'Not Synced';
+    syncStatusBadge.className = 'badge badge-info';
   }
 }
 
 /**
- * Submits the scenario edits to the backend proxy to create the branch & commit the changes.
+ * Submits the scenario edits: creates branch if missing, commits file.
  */
 async function saveAndPushToGitHub() {
   setSavingState(true);
   hideBanner();
 
   try {
-    const repo = repoSelect.value;
-    const baseBranch = baseBranchSelect.value;
+    const repo = getRepoFullName(githubRepo);
+    const baseBranch = baseBranchInput.value || githubBaseBranch;
     const targetBranch = targetBranchInput.value.trim();
     const filePath = filePathInput.value.trim();
     const fileContent = editor.getValue();
+    const base64Content = btoa(unescape(encodeURIComponent(fileContent)));
+    const commitMsg = `AB#${activeWorkItemId}: Update BDD scenario for ${activeWorkItemTitle} (by ${adoUserName})`;
 
-    const appToken = await SDK.getAppToken();
-
-    const response = await fetch(SYNC_SERVICE_BASE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${appToken}`
-      },
-      body: JSON.stringify({
-        repo,
-        baseBranch,
-        targetBranch,
-        filePath,
-        fileContent,
-        workItemId: activeWorkItemId,
-        workItemTitle: activeWorkItemTitle
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMsg = 'Failed to sync to GitHub.';
-      try {
-        const errObj = JSON.parse(errorText);
-        errorMsg = errObj.error || errorMsg;
-      } catch {
-        errorMsg = errorText || errorMsg;
-      }
-      throw new Error(errorMsg);
+    // 1. Get base branch SHA
+    let baseSha: string | undefined;
+    try {
+      const baseBranchData = await githubDirectFetch(`/repos/${repo}/git/refs/heads/${baseBranch}`, 'GET', githubPAT);
+      baseSha = baseBranchData?.object?.sha;
+    } catch (e: any) {
+      throw new Error(`Failed to access base branch '${baseBranch}'. Please verify that the branch exists, your Personal Access Token has 'repo' scope, and the repository URL is correct. (Inner Error: ${e.message})`);
     }
 
-    const data = await response.json() as { commitSha: string; createdNewBranch: boolean };
+    if (!baseSha) {
+      throw new Error(`Could not retrieve SHA for base branch '${baseBranch}'.`);
+    }
 
-    // Update ADO custom fields to link the files permanently
-    await formService.setFieldValue('Custom.Repository', repo);
+    // 2. Try to create branch or ignore if exists
+    try {
+      await githubDirectFetch(
+        `/repos/${repo}/git/refs`, 
+        'POST', 
+        githubPAT,
+        { ref: `refs/heads/${targetBranch}`, sha: baseSha }
+      );
+    } catch (e: any) {
+      if (!e.message.includes('already exists')) {
+        throw e;
+      }
+    }
+
+    // 3. Check if file exists to get its SHA (required for updating)
+    let existingSha: string | undefined = undefined;
+    try {
+      const fileData = await githubDirectFetch(`/repos/${repo}/contents/${filePath}?ref=${targetBranch}`, 'GET', githubPAT);
+      existingSha = fileData?.sha;
+    } catch (e: any) {
+      if (!e.message.includes('404') && !e.message.includes('Not Found')) {
+        throw e;
+      }
+    }
+
+    // 4. Create/Update the file using the explicit GitHub Direct Fetch
+    let commitSha = 'unknown';
+    let isUnchanged = false;
+    try {
+      const response = await githubDirectFetch(
+        `/repos/${repo}/contents/${filePath}`, 
+        'PUT', 
+        githubPAT,
+        {
+          message: commitMsg,
+          content: base64Content,
+          sha: existingSha,
+          branch: targetBranch,
+          author: {
+            name: adoUserName,
+            email: adoUserEmail || 'ado-user@example.com'
+          },
+          committer: {
+            name: adoUserName,
+            email: adoUserEmail
+          }
+        }
+      );
+      if (response && response.commit && response.commit.sha) {
+        commitSha = response.commit.sha;
+      } else {
+        isUnchanged = true;
+      }
+    } catch (e: any) {
+      // Ignore API error on 201 Created/200 OK which shouldn't happen unless parsing fails
+      throw e;
+    }
+    
+    // Update ADO custom fields
     await formService.setFieldValue('Custom.FeatureBranch', targetBranch);
     await formService.setFieldValue('Custom.FeatureFilePath', filePath);
 
-    // Prompt user to save the work item changes to save the updated BDD metadata fields
-    showBanner(`Successfully synced BDD file to GitHub (Commit: ${data.commitSha.substring(0, 7)}). Please save this User Story to persist links!`, 'success');
+    if (isUnchanged) {
+      showBanner(`Successfully synced to GitHub, but no new commit was created because the file content was identical!`, 'success');
+    } else {
+      showBanner(`Successfully synced to GitHub (Commit: ${commitSha.substring(0, 7)}). Save User Story to persist links!`, 'success');
+    }
 
     syncStatusBadge.textContent = 'Synced with Git Branch';
     syncStatusBadge.className = 'badge badge-success';
@@ -467,7 +546,7 @@ function setSavingState(isSaving: boolean) {
   }
 }
 
-function showBanner(message: string, type: 'success' | 'error') {
+function showBanner(message: string, type: 'success' | 'error' | 'info') {
   bannerMessage.textContent = message;
   statusBanner.className = `banner ${type}`;
   statusBanner.classList.remove('hidden');
@@ -480,6 +559,7 @@ function hideBanner() {
 // Start application
 init().catch(err => {
   console.error("Extension initialization failed", err);
-  // Dismiss spinner even if init fails so user can see the error in the UI
-  try { SDK.notifyLoadSucceeded(); } catch (e) {}
+  document.body.innerHTML = `<div style="background:white; color:red; padding: 20px; z-index:9999; position:absolute; top:0; left:0; width:100%; height:100%;">
+    <h3>Init Failed</h3><p>${err.message}</p><pre>${err.stack}</pre>
+  </div>`;
 });
