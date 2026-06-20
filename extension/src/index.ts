@@ -503,7 +503,7 @@ async function saveAndPushToGitHub() {
         { ref: `refs/heads/${targetBranch}`, sha: baseSha }
       );
     } catch (e: any) {
-      if (!e.message.includes('already exists') && !e.message.includes('422')) {
+      if (!e.message.includes('already exists')) {
         throw e;
       }
     }
