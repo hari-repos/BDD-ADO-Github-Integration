@@ -26,8 +26,7 @@
     "vso.work",
     "vso.work_write",
     "vso.profile",
-    "vso.extension.data_write",
-    "vso.serviceendpoint_manage"
+    "vso.extension.data_write"
   ],
   "contributions": [
     {

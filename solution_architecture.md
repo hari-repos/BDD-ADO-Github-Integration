@@ -46,11 +46,11 @@ graph TD
 * **Editor**: [Monaco Editor](https://microsoft.github.io/monaco-editor/) configured with Gherkin language support for syntax highlighting (e.g., `Feature:`, `Scenario:`, `Given`, `When`, `Then`).
 * **Placement**: Integrated as a dedicated custom tab (e.g., **"BDD Canvas"**) next to the standard "Details" and "History" tabs inside the User Story.
 
-### B. Secure Configuration & Service Connection Proxy
-To provide seamless access to all board members without requiring them to have personal GitHub accounts or exposing a shared Personal Access Token (PAT) to the browser:
-1. An Azure DevOps Project Administrator configures a **GitHub Service Connection** for the project, embedding a Service Account PAT.
-2. The target GitHub repository and base branch (e.g., `main`) are saved at the **Project Level** using `IExtensionDataService` (1-to-1 Repo to Board mapping).
-3. The extension uses the ADO SDK (`TaskAgentRestClient.executeServiceEndpointRequest()`) to proxy REST API calls to GitHub through the ADO backend. The PAT never reaches the client browser.
+### B. Configuration & GitHub Integration
+To provide seamless access to all board members without requiring them to have personal GitHub accounts:
+1. An Azure DevOps Project Administrator configures a **GitHub Personal Access Token (PAT)** for the project.
+2. The target GitHub repository, base branch (e.g., `main`), and the PAT are saved at the **Project Level** using `IExtensionDataService` (1-to-1 Repo to Board mapping).
+3. The extension uses the ADO Extension Data Service to retrieve the PAT and directly communicates with the GitHub REST API using `fetch`.
 4. When committing, the extension dynamically fetches the logged-in ADO user's profile (`VSS.getWebContext().user`) and sets the `author` and `committer` fields in the GitHub API payload, ensuring the git history accurately attributes the changes to the individual business user.
 
 ### C. State Tracking (ADO Custom Fields)
