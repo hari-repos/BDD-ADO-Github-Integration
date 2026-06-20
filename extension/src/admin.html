@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BDD GitHub Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./index.css">
+  <style>
+    body { padding: 20px; font-family: 'Inter', sans-serif; }
+    .admin-container { max-width: 600px; margin: 0 auto; }
+    .admin-header { margin-bottom: 24px; }
+  </style>
+</head>
+<body class="dark-theme">
+  <div class="glass-container admin-container">
+    
+    <div id="status-banner" class="banner hidden">
+      <span id="banner-message">Status message here</span>
+      <button id="banner-close" class="banner-close-btn">&times;</button>
+    </div>
+
+    <section class="glass-card" style="padding: 24px;">
+      <div class="admin-header">
+        <script>
+    window.addEventListener("unhandledrejection", function(event) {
+      document.body.innerHTML = '<div style="background:white; color:red; padding: 20px; z-index:9999; position:absolute; top:0; left:0; width:100%; height:100%;"><h3>Unhandled Rejection (HTML)</h3><p>' + event.reason + '</p><pre>' + (event.reason && event.reason.stack ? event.reason.stack : '') + '</pre></div>';
+    });
+
+    // No AMD polyfills needed
+  </script>
+        <h2>BDD GitHub Integration Settings</h2>
+        <p style="color: var(--text-muted); margin-top: 8px;">
+          Configure the GitHub repository for this Azure DevOps project. This securely maps the board to a repository without exposing credentials to end users.
+        </p>
+      </div>
+
+      <div class="form-group">
+        <label for="admin-repo-input">Target Repository <span class="required">*</span></label>
+        <input type="text" id="admin-repo-input" placeholder="e.g. my-org/my-app" required>
+        <small class="helper-text">The GitHub repository where BDD features will be stored.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="admin-branch-input">Base Branch <span class="required">*</span></label>
+        <input type="text" id="admin-branch-input" placeholder="e.g. main or master" required>
+        <small class="helper-text">The default branch used when branching features.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="admin-pat-input">GitHub Personal Access Token (PAT) <span class="required">*</span></label>
+        <input type="password" id="admin-pat-input" placeholder="ghp_..." required>
+        <small class="helper-text">A GitHub PAT with 'repo' scope. Bypasses Azure DevOps proxy restrictions.</small>
+      </div>
+
+      <div style="margin-top: 24px;">
+        <button id="admin-save-button" class="btn btn-primary">Save Configuration</button>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./admin.ts"></script>
+</body>
+</html>

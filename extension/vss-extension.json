@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "bdd-canvas-for-boards",
   "publisher": "HaritharanPrabalanathan",
-  "version": "1.0.5",
+  "version": "1.0.38",
   "name": "BDD Canvas for Boards",
   "description": "A collaborative canvas to write and edit BDD scenarios directly in Azure Boards, bridging the gap between business and code by syncing to GitHub.",
   "public": false,
@@ -25,7 +25,9 @@
   "scopes": [
     "vso.work",
     "vso.work_write",
-    "vso.profile"
+    "vso.profile",
+    "vso.extension.data_write",
+    "vso.serviceendpoint_manage"
   ],
   "contributions": [
     {
@@ -38,6 +40,17 @@
         "name": "BDD Canvas",
         "uri": "dist/index.html",
         "icon": "images/tab-icon.png"
+      }
+    },
+    {
+      "id": "bdd-admin-hub",
+      "type": "ms.vss-web.hub",
+      "targets": [
+        "ms.vss-web.project-admin-hub-group"
+      ],
+      "properties": {
+        "name": "BDD GitHub Settings",
+        "uri": "dist/admin.html"
       }
     }
   ],
