@@ -28,6 +28,8 @@ The extension needs two text fields on your User Story to keep track of the GitH
    - **Feature File Path** (Reference Name: `Custom.FeatureFilePath`)
 5. Save the layout changes.
 
+![Create Custom Fields](/Users/hari/.gemini/antigravity/brain/bf9bc80e-24cc-4d6f-a33f-37fe51dd9e9c/ado_custom_fields_1781975051137.png)
+
 ### Step 1.2: Install the Extension
 1. Go to your **Organization Settings** > **Extensions**.
 2. Click **Browse marketplace**, search for the "BDD Canvas for Boards" extension, and install it to your organization.
@@ -42,6 +44,8 @@ We need to connect your ADO Project to your GitHub Repository.
    - **Base Branch**: e.g. `main` or `develop`
    - **GitHub Personal Access Token (PAT)**: A PAT belonging to a service account or yourself with `repo` scopes.
 5. Click **Save Configuration**.
+
+![BDD GitHub Settings](/Users/hari/.gemini/antigravity/brain/bf9bc80e-24cc-4d6f-a33f-37fe51dd9e9c/ado_admin_settings_1781975067751.png)
 
 ---
 
