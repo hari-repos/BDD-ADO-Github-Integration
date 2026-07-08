@@ -486,11 +486,16 @@ function validateFormState() {
 async function fetchFileContentFromGitHub(repo: string, branch: string, filePath: string) {
   try {
     const fullRepo = getRepoFullName(repo);
-    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${branch}`, 'GET', githubPAT);
+    // Add timestamp to bypass aggressive GitHub API caching on GET contents
+    const timestamp = Date.now();
+    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${branch}&t=${timestamp}`, 'GET', githubPAT);
 
     if (data && data.content) {
       const content = atob(data.content);
-      editor.setValue(content);
+      // Only update editor if content is actually different to prevent cursor position loss
+      if (editor.getValue() !== content) {
+        editor.setValue(content);
+      }
       syncStatusBadge.textContent = 'Synced with Git Branch';
       syncStatusBadge.className = 'badge badge-success';
     }
@@ -510,11 +515,15 @@ async function handleDeletedOrMergedBranch(repo: string, filePath: string) {
   try {
     const baseBranch = githubBaseBranch || 'main';
     const fullRepo = getRepoFullName(repo);
-    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${baseBranch}`, 'GET', githubPAT);
+    // Add timestamp to bypass aggressive GitHub API caching on GET contents
+    const timestamp = Date.now();
+    const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${baseBranch}&t=${timestamp}`, 'GET', githubPAT);
 
     if (data && data.content) {
       const content = atob(data.content);
-      editor.setValue(content);
+      if (editor.getValue() !== content) {
+        editor.setValue(content);
+      }
       syncStatusBadge.textContent = 'Merged (Read-only)';
       syncStatusBadge.className = 'badge badge-warning';
       showBanner(`Branch has been deleted. Loaded scenario from merged base branch '${baseBranch}'.`, 'success');
@@ -572,7 +581,8 @@ async function saveAndPushToGitHub() {
     // 3. Check if file exists to get its SHA (required for updating)
     let existingSha: string | undefined = undefined;
     try {
-      const fileData = await githubDirectFetch(`/repos/${repo}/contents/${filePath}?ref=${targetBranch}`, 'GET', githubPAT);
+      const timestamp = Date.now();
+      const fileData = await githubDirectFetch(`/repos/${repo}/contents/${filePath}?ref=${targetBranch}&t=${timestamp}`, 'GET', githubPAT);
       existingSha = fileData?.sha;
     } catch (e: any) {
       if (!e.message.includes('404') && !e.message.includes('Not Found')) {

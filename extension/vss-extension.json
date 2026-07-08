@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "id": "bdd-canvas-for-boards",
   "publisher": "HaritharanPrabalanathan",
-  "version": "1.0.44",
+  "version": "1.0.46",
   "name": "BDD Canvas for Boards",
   "description": "A collaborative canvas to write and edit BDD scenarios directly in Azure Boards, bridging the gap between business and code by syncing to GitHub.",
   "public": false,
