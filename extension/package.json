@@ -1,6 +1,6 @@
 {
   "name": "bdd-canvas-for-boards",
-  "version": "1.0.42",
+  "version": "1.0.43",
   "description": "Azure DevOps Work Item Form Extension for BDD Canvas",
   "scripts": {
     "dev": "vite --config vite.config.index.ts",

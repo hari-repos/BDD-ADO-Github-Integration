@@ -392,8 +392,13 @@ async function loadWorkItemData() {
         .replace(/^-|-$/g, '');
 
       const generatedBranchName = `${prefix}/${activeWorkItemId}-${cleanTitle.substring(0, 40)}`;
+      const generatedFilePath = `tests/features/${prefix}-${activeWorkItemId}.feature`;
+      
       targetBranchInput.value = generatedBranchName;
-      filePathInput.value = `tests/features/${prefix}-${activeWorkItemId}.feature`;
+      filePathInput.value = generatedFilePath;
+      
+      // Proactively check if the file already exists in GitHub (in case ADO fields weren't saved)
+      await fetchFileContentFromGitHub(githubRepo, generatedBranchName, generatedFilePath);
     }
 
     validateFormState();
