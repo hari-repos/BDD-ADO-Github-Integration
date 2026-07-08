@@ -611,6 +611,10 @@ async function saveAndPushToGitHub() {
     // Update ADO custom fields
     await formService.setFieldValue('Custom.FeatureBranch', targetBranch);
     await formService.setFieldValue('Custom.FeatureFilePath', filePath);
+    
+    // Add activity comment to the Work Item Discussion/History
+    const comment = `<strong>BDD Canvas Update:</strong> Pushed BDD scenario to GitHub branch <code>${targetBranch}</code> (Commit: ${commitSha !== 'unknown' ? commitSha.substring(0, 7) : 'unchanged'})`;
+    await formService.setFieldValue('System.History', comment);
 
     if (isUnchanged) {
       showBanner(`Successfully synced to GitHub, but no new commit was created because the file content was identical!`, 'success');
