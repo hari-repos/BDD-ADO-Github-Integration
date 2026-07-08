@@ -17,11 +17,17 @@ let dataManager: IExtensionDataManager;
 // DOM Elements
 const repoInput = document.getElementById('repo-input') as HTMLInputElement;
 const baseBranchInput = document.getElementById('base-branch-input') as HTMLSelectElement;
+const templateFileSelect = document.getElementById('template-file-select') as HTMLSelectElement;
+const loadTemplateButton = document.getElementById('load-template-button') as HTMLButtonElement;
+const templateFileLoader = document.getElementById('templateFileLoader') as HTMLSpanElement;
 const targetBranchInput = document.getElementById('target-branch-input') as HTMLInputElement;
 const filePathInput = document.getElementById('file-path-input') as HTMLInputElement;
 const saveButton = document.getElementById('save-button') as HTMLButtonElement;
 const saveSpinner = document.getElementById('save-spinner') as HTMLElement;
 const saveBtnText = document.getElementById('save-btn-text') as HTMLElement;
+
+const invalidWorkItemOverlay = document.getElementById('invalid-work-item-overlay') as HTMLDivElement;
+const invalidWorkItemMsg = document.getElementById('invalid-work-item-msg') as HTMLParagraphElement;
 
 const statusBanner = document.getElementById('status-banner') as HTMLDivElement;
 const bannerMessage = document.getElementById('banner-message') as HTMLSpanElement;
@@ -153,6 +159,9 @@ async function init() {
 
   saveButton.addEventListener('click', () => saveAndPushToGitHub());
   bannerClose.addEventListener('click', () => hideBanner());
+  
+  baseBranchInput.addEventListener('change', () => fetchFeatureFilesForBranch(baseBranchInput.value));
+  loadTemplateButton.addEventListener('click', () => loadTemplateFile());
 
   try {
     activeWorkItemId = await formService.getId();
@@ -244,6 +253,10 @@ async function populateBaseBranchDropdown() {
       } else if (branchesData.length === 0) {
         baseBranchInput.innerHTML = `<option disabled selected>No branches found</option>`;
       }
+      
+      if (baseBranchInput.value && baseBranchInput.value !== 'Loading branches...') {
+        fetchFeatureFilesForBranch(baseBranchInput.value);
+      }
     } else {
       baseBranchInput.innerHTML = `<option disabled selected>Error loading branches</option>`;
       console.error('Failed to parse branches:', branchesData);
@@ -328,16 +341,36 @@ async function loadWorkItemData() {
     }
 
     const values = await formService.getFieldValues([
+      'System.Id',
+      'System.WorkItemType',
       'System.Title',
       'Custom.FeatureBranch',
       'Custom.FeatureFilePath'
     ]);
 
+    activeWorkItemId = (values['System.Id'] as number) || 0;
+    const workItemType = (values['System.WorkItemType'] as string) || '';
     activeWorkItemTitle = (values['System.Title'] as string) || '';
     const storedBranch = (values['Custom.FeatureBranch'] as string) || '';
     const storedFilePath = (values['Custom.FeatureFilePath'] as string) || '';
 
+    // Validate rules
+    if (activeWorkItemId <= 0) {
+      invalidWorkItemMsg.textContent = "Please save the work item first to generate an ID before using the BDD extension.";
+      invalidWorkItemOverlay.classList.remove('hidden');
+      return;
+    }
+
+    const allowedTypes = ['Product Backlog Item', 'Feature', 'Bug'];
+    if (!allowedTypes.includes(workItemType)) {
+      invalidWorkItemMsg.textContent = `BDD Canvas is only available for saved PBIs, Features, and Defects (Current: ${workItemType}).`;
+      invalidWorkItemOverlay.classList.remove('hidden');
+      return;
+    }
+
     if (!githubRepo || !githubPAT) return;
+    
+    const prefix = workItemType === 'Bug' ? 'bugfix' : 'feature';
 
     if (storedBranch && storedFilePath) {
       syncStatusBadge.textContent = 'Linked to GitHub';
@@ -351,22 +384,82 @@ async function loadWorkItemData() {
       syncStatusBadge.textContent = 'Not Connected';
       syncStatusBadge.className = 'badge badge-info';
 
-      // Auto-generate strict branch name: feature/<id>-<title-lowercase>
+      // Auto-generate strict branch name: {prefix}/<id>-<title-lowercase>
       const cleanTitle = activeWorkItemTitle
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '-')
         .replace(/-+/g, '-')
         .replace(/^-|-$/g, '');
 
-      const generatedBranchName = `feature/${activeWorkItemId}-${cleanTitle.substring(0, 40)}`;
+      const generatedBranchName = `${prefix}/${activeWorkItemId}-${cleanTitle.substring(0, 40)}`;
       targetBranchInput.value = generatedBranchName;
-      filePathInput.value = `tests/features/pbi-${activeWorkItemId}.feature`;
+      filePathInput.value = `tests/features/${prefix}-${activeWorkItemId}.feature`;
     }
 
     validateFormState();
   } catch (error: any) {
     showBanner(`Error loading Work Item: ${error.message}`, 'error');
   }
+}
+
+/**
+ * Fetches .feature files from the selected branch
+ */
+async function fetchFeatureFilesForBranch(branch: string) {
+  if (!branch) return;
+  templateFileLoader.style.display = 'inline-block';
+  templateFileSelect.innerHTML = '<option disabled selected>Loading files...</option>';
+  loadTemplateButton.disabled = true;
+
+  try {
+    const repo = getRepoFullName(githubRepo);
+    const branchData = await githubDirectFetch(`/repos/${repo}/git/refs/heads/${branch}`, 'GET', githubPAT);
+    const commitSha = branchData?.object?.sha;
+    if (!commitSha) throw new Error("Could not get branch SHA");
+
+    const treeData = await githubDirectFetch(`/repos/${repo}/git/trees/${commitSha}?recursive=1`, 'GET', githubPAT);
+    
+    if (treeData && treeData.tree) {
+      const featureFiles = treeData.tree.filter((item: any) => item.type === 'blob' && item.path.endsWith('.feature'));
+
+      templateFileSelect.innerHTML = '';
+      if (featureFiles.length > 0) {
+        templateFileSelect.innerHTML = '<option disabled selected>Select a .feature file</option>';
+        featureFiles.forEach((file: any) => {
+          const option = document.createElement('option');
+          option.value = file.path;
+          option.textContent = file.path;
+          templateFileSelect.appendChild(option);
+        });
+        
+        templateFileSelect.addEventListener('change', () => {
+          loadTemplateButton.disabled = !templateFileSelect.value || templateFileSelect.value.startsWith('Select');
+        });
+      } else {
+        templateFileSelect.innerHTML = '<option disabled selected>No .feature files found</option>';
+      }
+    }
+  } catch (error) {
+    console.error("Failed to fetch feature files:", error);
+    templateFileSelect.innerHTML = '<option disabled selected>Error loading files</option>';
+  } finally {
+    templateFileLoader.style.display = 'none';
+  }
+}
+
+/**
+ * Loads the selected template file content
+ */
+async function loadTemplateFile() {
+  const branch = baseBranchInput.value;
+  const filePath = templateFileSelect.value;
+  if (!branch || !filePath || filePath.startsWith('Select')) return;
+
+  await fetchFileContentFromGitHub(githubRepo, branch, filePath);
+  
+  syncStatusBadge.textContent = 'Template Loaded';
+  syncStatusBadge.className = 'badge badge-info';
+  validateFormState();
 }
 
 /**
@@ -436,7 +529,8 @@ async function saveAndPushToGitHub() {
 
   try {
     const repo = getRepoFullName(githubRepo);
-    const baseBranch = baseBranchInput.value || githubBaseBranch;
+    // Always branch from the project's configured base branch (main), ignoring template branch
+    const baseBranchForNewFeature = githubBaseBranch || 'main';
     const targetBranch = targetBranchInput.value.trim();
     const filePath = filePathInput.value.trim();
     const fileContent = editor.getValue();
@@ -446,14 +540,14 @@ async function saveAndPushToGitHub() {
     // 1. Get base branch SHA
     let baseSha: string | undefined;
     try {
-      const baseBranchData = await githubDirectFetch(`/repos/${repo}/git/refs/heads/${baseBranch}`, 'GET', githubPAT);
+      const baseBranchData = await githubDirectFetch(`/repos/${repo}/git/refs/heads/${baseBranchForNewFeature}`, 'GET', githubPAT);
       baseSha = baseBranchData?.object?.sha;
     } catch (e: any) {
-      throw new Error(`Failed to access base branch '${baseBranch}'. Please verify that the branch exists, your Personal Access Token has 'repo' scope, and the repository URL is correct. (Inner Error: ${e.message})`);
+      throw new Error(`Failed to access base branch '${baseBranchForNewFeature}'. Please verify that the branch exists, your Personal Access Token has 'repo' scope, and the repository URL is correct. (Inner Error: ${e.message})`);
     }
 
     if (!baseSha) {
-      throw new Error(`Could not retrieve SHA for base branch '${baseBranch}'.`);
+      throw new Error(`Could not retrieve SHA for base branch '${baseBranchForNewFeature}'.`);
     }
 
     // 2. Try to create branch or ignore if exists

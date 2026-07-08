@@ -59,12 +59,23 @@
 
         <div class="form-group">
           <label for="base-branch-input" style="display: flex; justify-content: space-between; align-items: center;">
-            Base Branch
+            Template Branch
             <span id="baseBranchLoader" class="loader" style="display: none; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; width: 14px; height: 14px; animation: spin 1s linear infinite;"></span>
           </label>
-          <select id="base-branch-input" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); cursor: pointer;">
+          <select id="base-branch-input" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); cursor: pointer; margin-bottom: 8px;">
             <option disabled selected>Loading branches...</option>
           </select>
+        </div>
+
+        <div class="form-group">
+          <label for="template-file-select" style="display: flex; justify-content: space-between; align-items: center;">
+            Template File
+            <span id="templateFileLoader" class="loader" style="display: none; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; width: 14px; height: 14px; animation: spin 1s linear infinite;"></span>
+          </label>
+          <select id="template-file-select" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); cursor: pointer; margin-bottom: 8px;">
+            <option disabled selected>Select a branch first</option>
+          </select>
+          <button id="load-template-button" class="btn btn-secondary" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--primary); background: transparent; color: var(--primary); cursor: pointer;" disabled>Load Content</button>
         </div>
 
         <div class="form-group">
@@ -78,13 +89,12 @@
         </div>
 
         <div class="form-group">
-          <label for="file-path-input">Feature File Path <span class="required">*</span></label>
+          <label for="file-path-input">Destination File Path <span class="required">*</span></label>
           <input 
             type="text" 
             id="file-path-input" 
             placeholder="tests/features/us-102.feature" 
             required 
-            disabled
           >
         </div>
       </aside>
@@ -98,6 +108,15 @@
           </svg>
           <h2 style="margin: 0 0 8px 0; color: #fff;">Configuration Missing</h2>
           <p style="color: #9ca3af; max-width: 340px; line-height: 1.5; margin: 0;">This project is not linked to a GitHub repository.<br><br>Please contact your <b>Project Administrator</b> to configure the BDD GitHub Settings under Project Settings.</p>
+        </div>
+
+        <!-- Invalid Work Item Overlay -->
+        <div id="invalid-work-item-overlay" class="hidden" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(20, 20, 20, 0.85); z-index: 90; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; border-radius: 12px; backdrop-filter: blur(5px);">
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="#f87171" style="margin-bottom: 16px;">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+          </svg>
+          <h2 style="margin: 0 0 8px 0; color: #fff;">Access Denied</h2>
+          <p id="invalid-work-item-msg" style="color: #9ca3af; max-width: 340px; line-height: 1.5; margin: 0;">BDD Canvas is only available for saved PBIs, Features, and Defects.</p>
         </div>
         <div class="card-header editor-header">
           <div class="editor-title-container">
