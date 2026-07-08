@@ -503,7 +503,7 @@ async function fetchFileContentFromGitHub(repo: string, branch: string, filePath
  */
 async function handleDeletedOrMergedBranch(repo: string, filePath: string) {
   try {
-    const baseBranch = baseBranchInput.value || githubBaseBranch || 'main';
+    const baseBranch = githubBaseBranch || 'main';
     const fullRepo = getRepoFullName(repo);
     const data = await githubDirectFetch(`/repos/${fullRepo}/contents/${filePath}?ref=${baseBranch}`, 'GET', githubPAT);
 
