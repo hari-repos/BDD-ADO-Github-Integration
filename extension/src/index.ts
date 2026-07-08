@@ -621,10 +621,13 @@ async function saveAndPushToGitHub() {
     const comment = `<strong>BDD Canvas Update:</strong> Pushed BDD scenario to GitHub branch <code>${targetBranch}</code> (Commit: ${commitSha !== 'unknown' ? commitSha.substring(0, 7) : 'unchanged'})`;
     await formService.setFieldValue('System.History', comment);
 
+    // Automatically save the ADO work item to persist fields and history
+    await formService.save();
+
     if (isUnchanged) {
-      showBanner(`Successfully synced to GitHub, but no new commit was created because the file content was identical!`, 'success');
+      showBanner(`Successfully synced to GitHub (No changes made). Work item saved!`, 'success');
     } else {
-      showBanner(`Successfully synced to GitHub (Commit: ${commitSha.substring(0, 7)}). Save User Story to persist links!`, 'success');
+      showBanner(`Successfully synced to GitHub (Commit: ${commitSha.substring(0, 7)}). Work item saved automatically!`, 'success');
     }
 
     syncStatusBadge.textContent = 'Synced with Git Branch';
